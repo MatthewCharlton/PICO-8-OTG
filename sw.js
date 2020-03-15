@@ -9,10 +9,10 @@
   }
 
   if (
-    nativeAddAll && (!userAgent ||
+    nativeAddAll &&
+    (!userAgent ||
       (agent === 'Firefox' && version >= 46) ||
-      (agent === 'Chrome'  && version >= 50)
-    )
+      (agent === 'Chrome' && version >= 50))
   ) {
     return;
   }
@@ -29,81 +29,87 @@
 
     NetworkError.prototype = Object.create(Error.prototype);
 
-    return Promise.resolve().then(function() {
-      if (arguments.length < 1) throw new TypeError();
+    return Promise.resolve()
+      .then(function() {
+        if (arguments.length < 1) throw new TypeError();
 
-      // Simulate sequence<(Request or USVString)> binding:
-      var sequence = [];
+        // Simulate sequence<(Request or USVString)> binding:
+        var sequence = [];
 
-      requests = requests.map(function(request) {
-        if (request instanceof Request) {
-          return request;
+        requests = requests.map(function(request) {
+          if (request instanceof Request) {
+            return request;
+          } else {
+            return String(request); // may throw TypeError
+          }
+        });
+
+        return Promise.all(
+          requests.map(function(request) {
+            if (typeof request === 'string') {
+              request = new Request(request);
+            }
+
+            var scheme = new URL(request.url).protocol;
+
+            if (scheme !== 'http:' && scheme !== 'https:') {
+              throw new NetworkError('Invalid scheme');
+            }
+
+            return fetch(request.clone());
+          })
+        );
+      })
+      .then(function(responses) {
+        // If some of the responses has not OK-eish status,
+        // then whole operation should reject
+        if (
+          responses.some(function(response) {
+            return !response.ok;
+          })
+        ) {
+          throw new NetworkError('Incorrect response status');
         }
-        else {
-          return String(request); // may throw TypeError
-        }
+
+        // TODO: check that requests don't overwrite one another
+        // (don't think this is possible to polyfill due to opaque responses)
+        return Promise.all(
+          responses.map(function(response, i) {
+            return cache.put(requests[i], response);
+          })
+        );
+      })
+      .then(function() {
+        return undefined;
       });
-
-      return Promise.all(
-        requests.map(function(request) {
-          if (typeof request === 'string') {
-            request = new Request(request);
-          }
-
-          var scheme = new URL(request.url).protocol;
-
-          if (scheme !== 'http:' && scheme !== 'https:') {
-            throw new NetworkError("Invalid scheme");
-          }
-
-          return fetch(request.clone());
-        })
-      );
-    }).then(function(responses) {
-      // If some of the responses has not OK-eish status,
-      // then whole operation should reject
-      if (responses.some(function(response) {
-        return !response.ok;
-      })) {
-        throw new NetworkError('Incorrect response status');
-      }
-
-      // TODO: check that requests don't overwrite one another
-      // (don't think this is possible to polyfill due to opaque responses)
-      return Promise.all(
-        responses.map(function(response, i) {
-          return cache.put(requests[i], response);
-        })
-      );
-    }).then(function() {
-      return undefined;
-    });
   };
 
   Cache.prototype.add = function add(request) {
     return this.addAll([request]);
   };
-}());
+})();
 
 self.addEventListener('install', function(e) {
- e.waitUntil(
-   caches.open('pico-celeste').then(function(cache) {
-     return cache.addAll([
-       '/',
-       '/PICO-celeste.html',
-       '/PICO-breakout.html',
-       '/sw.js'
-     ]);
-   })
- );
+  e.waitUntil(
+    caches.open('pico-celeste').then(function(cache) {
+      return cache.addAll([
+        '/',
+        '/PICO-celeste.html',
+        '/PICO-breakout.html',
+        '/PICO-sweet-buns.html',
+        '/PICO-porklike.html',
+        '/sw.js'
+      ]);
+    })
+  );
 });
 
 self.addEventListener('fetch', function(event) {
- console.log(event.request.url);
+  console.log(event.request.url);
 
- event.respondWith(
-   caches.match(event.request).then(function(response) {
-     return response || fetch(event.request);
-   })
- );
+  event.respondWith(
+    caches.match(event.request).then(function(response) {
+      return response || fetch(event.request);
+    })
+  );
 });
